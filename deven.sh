@@ -126,6 +126,7 @@ main() {
 				lxc start $container_name
 				sleep 3
 			fi
+			getip
 			ssh-keygen -R $host_name
 			lxc stop $container_name 2>/dev/null
 			lxc delete $container_name
