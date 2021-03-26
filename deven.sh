@@ -1,5 +1,8 @@
 #!/bin/bash
 
+GREEN="\e[32m"
+RED="\e[31m"
+
 init() {
 	if [[ "$(lxc storage show default 2>&1)" =~ "Error" ]]; then
 		lxd init
@@ -9,10 +12,10 @@ init() {
 		lxc profile create x11
 		read -p "nvidia.runtime = ? (DEFAULT=false): " nvidia_runtime
 		if [ "$nvidia_runtime" = "true" ]; then
-			echo "Set nvidia.runtime = true"
+			echo -e "$GREEN Set nvidia.runtime = true"
 		else
 			nvidia_runtime=false
-			echo "Set nvidia.runtime = false"
+			echo -e "$RED Set nvidia.runtime = false"
 		fi
 		cat x11.profile | sed -e "s|connect: unix:@/tmp/.X11-unix/X0|connect: unix:@/tmp/.X11-unix/X${DISPLAY: -1}|" | sed -e "s|nvidia.runtime: \"false\"|nvidia.runtime: \"$nvidia_runtime\"|" | lxc profile edit x11
 	fi
@@ -23,23 +26,27 @@ getip() {
 }
 
 activate_ssh_password_less() {
-	echo "Activate ssh passwordless"
-	lxc start $container_name
-	echo "WORKAROUND: Requires executing under current user $(whoami), please authenticate"
-	until su - $USER -c "lxc exec $container_name -- passwd -d ubuntu"; do :; done
-	lxc exec $container_name -- bash -c "cat /etc/ssh/sshd_config | sed -e \"s|PasswordAuthentication no|PasswordAuthentication yes|\" | sed -e \"s|#PermitEmptyPasswords no|PermitEmptyPasswords yes|\" | sudo tee /etc/ssh/sshd_config > /dev/null"
-	lxc exec $container_name -- bash -c "sudo echo \"ssh\" >> /etc/securetty"
-	lxc restart $container_name
-	echo "Done ! First ssh to initialize connection"
-	getip
-	if [ -z "$host_name" ]; then
+	if [ "$NO_SSH_PASSWORDLESS" = "true" ]; then
 		:
 	else
-		until ssh ubuntu@$host_name command; do
-			sleep 3
-		done
+		echo -e "$GREEN Activate ssh passwordless"
+		start_if_stopped
+		echo -e "$RED WORKAROUND: Requires executing under current user $(whoami), please authenticate"
+		until su - $USER -c "lxc exec $container_name -- passwd -d ubuntu"; do :; done
+		lxc exec $container_name -- bash -c "cat /etc/ssh/sshd_config | sed -e \"s|PasswordAuthentication no|PasswordAuthentication yes|\" | sed -e \"s|#PermitEmptyPasswords no|PermitEmptyPasswords yes|\" | sudo tee /etc/ssh/sshd_config > /dev/null"
+		lxc exec $container_name -- bash -c "sudo echo \"ssh\" >> /etc/securetty"
+		lxc restart $container_name
+		echo -e "$GREEN Done ! First ssh to initialize connection"
+		getip
+		if [ -z "$host_name" ]; then
+			:
+		else
+			until ssh ubuntu@$host_name command; do
+				sleep 3
+			done
+		fi
+		lxc stop $container_name
 	fi
-	lxc restart $container_name
 }
 
 validate_container_name() {
@@ -48,9 +55,16 @@ validate_container_name() {
 	done
 }
 
+start_if_stopped() {
+	if [[ "$(lxc list $container_name -c s --format csv)" =~ "STOPPED" ]]; then
+		lxc start $container_name
+		sleep 3
+	fi
+}
+
 create() {
 	init
-	echo "Creating new container from image"
+	echo -e "$GREEN Creating new container from image"
 	validate_container_name
 	uid=$(id -u $(whoami))
 	gid=$(id -g $(whoami))
@@ -58,12 +72,12 @@ create() {
 	if [[ "$(cat /etc/subuid)" =~ "root:$uid:1" ]]; then
 		:
 	else
-		echo "root:$uid:1" | sudo tee -a /etc/subuid >/dev/null
+		echo -e "root:$uid:1" | sudo tee -a /etc/subuid >/dev/null
 	fi
 	if [[ "$(cat /etc/subgid)" =~ "root:$gid:1" ]]; then
 		:
 	else
-		echo "root:$gid:1" | sudo tee -a /etc/subgid >/dev/null
+		echo -e "root:$gid:1" | sudo tee -a /etc/subgid >/dev/null
 	fi
 	lxc launch ubuntu:bionic --profile default --profile x11 $container_name
 	lxc stop $container_name
@@ -76,10 +90,7 @@ create() {
 
 spawn() {
 	if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
-		if [[ "$(lxc list $container_name -c s --format csv)" =~ "STOPPED" ]]; then
-			lxc start $container_name
-			sleep 3
-		fi
+		start_if_stopped
 		lxc exec $container_name -- sudo --user ubuntu --login
 	else
 		if [[ "$(lxc list base -c n --format csv)" =~ "base" ]]; then
@@ -90,7 +101,7 @@ spawn() {
 			activate_ssh_password_less
 			spawn
 		else
-			echo "Base container not found"
+			echo -e "$RED Base container not found"
 			create $container_name
 		fi
 	fi
@@ -103,41 +114,74 @@ ask_if_empty() {
 }
 
 main() {
-	container_name=$2
-	ask_if_empty
 	case $1 in
 	spawn)
-		spawn
+		ACTION="_spawn"
+		shift
 		;;
 	create)
-		create $container_name
+		ACTION="_create"
+		shift
 		;;
 	showip)
-		getip
-		if [ -z "$host_name" ]; then
-			echo "IP of $container_name not found"
-		else
-			echo "IP of $container_name is $host_name"
-		fi
+		ACTION="_showip"
+		shift
 		;;
 	delete)
-		if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
-			if [[ "$(lxc list $container_name -c s --format csv)" =~ "STOPPED" ]]; then
-				lxc start $container_name
-				sleep 3
-			fi
-			getip
-			ssh-keygen -R $host_name
-			lxc stop $container_name 2>/dev/null
-			lxc delete $container_name
-		else
-			echo "$container_name not found"
-		fi
+		ACTION="_delete"
+		shift
 		;;
 	*)
 		PROGRAM_NAME="$(basename "$0")"
-		echo "$PROGRAM_NAME: '$1' is not a $PROGRAM_NAME command."
-		echo "See '$PROGRAM_NAME help'"
+		echo -e "$RED $PROGRAM_NAME: '$1' is not a $PROGRAM_NAME command."
+		echo -e "$RED See '$PROGRAM_NAME help'"
+		exit 1
+		;;
+	esac
+
+	while getopts ':c:' opt; do
+		case "$opt" in
+		c)
+			echo -e "$GREEN -c: classic mode, without activating ssh passwordless"
+			NO_SSH_PASSWORDLESS="true"
+			shift
+			;;
+		\?)
+			echo -e "$RED Unknown option: -$OPTARG"
+			exit 3
+			;;
+		esac
+	done
+	container_name=$1
+	ask_if_empty
+
+	case $ACTION in
+	_spawn)
+		spawn
+		;;
+	_create)
+		create
+		;;
+	_showip)
+		getip
+		if [ -z "$host_name" ]; then
+			echo -e "$RED IP of $container_name not found"
+		else
+			echo -e "$GREEN IP of $container_name is $host_name"
+		fi
+		;;
+	_delete)
+		if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
+			start_if_stopped
+			getip
+			ssh-keygen -R $host_name
+			lxc stop $container_name
+			lxc delete $container_name
+		else
+			echo -e "$RED $container_name not found"
+		fi
+		;;
+	*)
 		exit 1
 		;;
 	esac
