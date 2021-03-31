@@ -91,7 +91,11 @@ create() {
 spawn() {
 	if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
 		start_if_stopped
-		lxc exec $container_name -- sudo --user ubuntu --login
+		if [ "$NO_SHELL" = "true" ]; then
+			show_ip
+		else
+			lxc exec $container_name -- sudo --user ubuntu --login
+		fi
 	else
 		if [[ "$(lxc list base -c n --format csv)" =~ "base" ]]; then
 			if [[ "$(lxc list base -c s --format csv)" =~ "RUNNING" ]]; then
@@ -111,6 +115,15 @@ ask_if_empty() {
 	while [ -z "$container_name" ]; do
 		read -p "Container name: " container_name
 	done
+}
+
+show_ip() {
+	getip
+	if [ -z "$host_name" ]; then
+		echo -e "$RED IP of $container_name not found"
+	else
+		echo -e "$GREEN IP of $container_name is $host_name"
+	fi
 }
 
 main() {
@@ -139,11 +152,16 @@ main() {
 		;;
 	esac
 
-	while getopts ':c:' opt; do
+	while getopts ':cn:' opt; do
 		case "$opt" in
 		c)
 			echo -e "$GREEN -c: classic mode, without activating ssh passwordless"
 			NO_SSH_PASSWORDLESS="true"
+			shift
+			;;
+		n)
+			echo -e "$GREEN -n: no shell mode"
+			NO_SHELL="true"
 			shift
 			;;
 		\?)
@@ -163,12 +181,7 @@ main() {
 		create
 		;;
 	_showip)
-		getip
-		if [ -z "$host_name" ]; then
-			echo -e "$RED IP of $container_name not found"
-		else
-			echo -e "$GREEN IP of $container_name is $host_name"
-		fi
+		show_ip
 		;;
 	_delete)
 		if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
