@@ -1,4 +1,5 @@
 #!/bin/bash
+set -eo pipefail
 
 GREEN="\e[32m"
 RED="\e[31m"
@@ -17,7 +18,7 @@ init() {
 			nvidia_runtime=false
 			echo -e "$RED Set nvidia.runtime = false"
 		fi
-		cat x11.profile | sed -e "s|connect: unix:@/tmp/.X11-unix/X0|connect: unix:@/tmp/.X11-unix/X${DISPLAY: -1}|" | sed -e "s|nvidia.runtime: \"false\"|nvidia.runtime: \"$nvidia_runtime\"|" | lxc profile edit x11
+		cat $HOME/.deven/x11.profile | sed -e "s|connect: unix:@/tmp/.X11-unix/X0|connect: unix:@/tmp/.X11-unix/X${DISPLAY: -1}|" | sed -e "s|nvidia.runtime: \"false\"|nvidia.runtime: \"$nvidia_runtime\"|" | lxc profile edit x11
 	fi
 }
 
@@ -26,9 +27,7 @@ getip() {
 }
 
 activate_ssh_password_less() {
-	if [ "$NO_SSH_PASSWORDLESS" = "true" ]; then
-		:
-	else
+	if [ "$NO_SSH_PASSWORDLESS" != "true" ]; then
 		echo -e "$GREEN Activate ssh passwordless"
 		start_if_stopped
 		echo -e "$RED WORKAROUND: Requires executing under current user $(whoami), please authenticate"
@@ -38,9 +37,7 @@ activate_ssh_password_less() {
 		lxc restart $container_name
 		echo -e "$GREEN Done ! First ssh to initialize connection"
 		getip
-		if [ -z "$host_name" ]; then
-			:
-		else
+		if [ -n "$host_name" ]; then
 			until ssh ubuntu@$host_name command; do
 				sleep 3
 			done
@@ -63,7 +60,10 @@ start_if_stopped() {
 }
 
 create() {
-	init
+	init || {
+		echo -e "$RED lxc initialization error, abort"
+		exit 1
+	}
 	echo -e "$GREEN Creating new container from image"
 	validate_container_name
 	uid=$(id -u $(whoami))
@@ -200,4 +200,9 @@ main() {
 	esac
 }
 
-main "$@"
+main "$@" || {
+	echo -e "$RED error while initializing new container, abort & revert"
+	echo -e "$RED delete manually lxc configurations (profiles,..etc) if needed"
+	lxc stop $container_name || { :; }
+	lxc delete $container_name
+}
