@@ -2,7 +2,7 @@ DESTDIR=/usr/local
 
 # install deven
 install :
-	mkdir /home/${SUDO_USER}/.deven
+	mkdir -p /home/${SUDO_USER}/.deven
 	cp x11.profile /home/${SUDO_USER}/.deven/
 	cp deven.sh ${DESTDIR}/bin/deven
 	chmod +x ${DESTDIR}/bin/deven
