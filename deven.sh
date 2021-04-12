@@ -30,8 +30,8 @@ activate_ssh_password_less() {
 	if [ "$NO_SSH_PASSWORDLESS" != "true" ]; then
 		echo -e "$GREEN Activate ssh passwordless"
 		start_if_stopped
-		echo -e "$RED WORKAROUND: Requires executing under current user $(whoami), please authenticate"
-		until su - $USER -c "lxc exec $container_name -- passwd -d ubuntu"; do :; done
+		lxc exec $container_name -- cloud-init status --wait
+		lxc exec $container_name -- passwd -d ubuntu
 		lxc exec $container_name -- bash -c "cat /etc/ssh/sshd_config | sed -e \"s|PasswordAuthentication no|PasswordAuthentication yes|\" | sed -e \"s|#PermitEmptyPasswords no|PermitEmptyPasswords yes|\" | sudo tee /etc/ssh/sshd_config > /dev/null"
 		lxc exec $container_name -- bash -c "sudo echo \"ssh\" >> /etc/securetty"
 		lxc restart $container_name
