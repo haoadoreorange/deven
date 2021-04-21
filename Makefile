@@ -2,13 +2,13 @@ DESTDIR=/usr/local
 
 # install deven
 install :
-	mkdir -p /home/${SUDO_USER}/.deven
-	cp x11.profile /home/${SUDO_USER}/.deven/
-	cp deven.sh ${DESTDIR}/bin/deven
-	chmod +x ${DESTDIR}/bin/deven
+	mkdir -p ${HOME}/.config/.deven
+	cp x11.profile ${HOME}/.config/.deven/
+	sudo cp deven.sh ${DESTDIR}/bin/deven
+	sudo chmod +x ${DESTDIR}/bin/deven
 
 # uninstall deven
 uninstall :
-	rm -rf /home/${SUDO_USER}/.deven
-	rm "${DESTDIR}/bin/deven"
+	rm -rf ${HOME}/.config/.deven/
+	sudo rm ${DESTDIR}/bin/deven
 	echo "\e[32mdeven has been uninstalled."
