@@ -3,8 +3,11 @@ set -eo pipefail
 
 GREEN="\e[32m"
 RED="\e[31m"
+ERROR_SPAWN_FAILED=901
+ERROR_INIT_FAILED=902
+ERROR_CREATE_BASE_FROM_IMAGE_FAILED=903
 
-init() {
+_init() {
 	if [[ "$(lxc storage show default 2>&1)" =~ "Error" ]]; then
 		lxd init
 	fi
@@ -22,19 +25,33 @@ init() {
 	fi
 }
 
-getip() {
-	host_name=$(lxc list $container_name -c 4 --format csv | cut -d' ' -f1)
+_validate_new_container_name() {
+	while [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; do
+		read -p "Container name already exist, please chose another: " container_name
+	done
+	if [ -z "$container_name" ]; then
+		_ask_if_empty
+		_validate_new_container_name
+	fi
 }
 
-activate_ssh_password_less() {
-	if [ "$NO_SSH_PASSWORDLESS" != "true" ]; then
+_start_if_stopped() {
+	if [[ "$(lxc list $container_name -c s --format csv)" =~ "STOPPED" ]]; then
+		lxc start $container_name
+		sleep 3
+	fi
+}
+
+_activate_ssh_passwordless() {
+	if [ "$no_ssh_passwordless" != "true" ]; then
 		echo -e "$GREEN Activate ssh passwordless"
-		start_if_stopped
+		_start_if_stopped
 		lxc exec $container_name -- cloud-init status --wait
 		lxc exec $container_name -- passwd -d ubuntu
 		lxc exec $container_name -- bash -c "cat /etc/ssh/sshd_config | sed -e \"s|PasswordAuthentication no|PasswordAuthentication yes|\" | sed -e \"s|#PermitEmptyPasswords no|PermitEmptyPasswords yes|\" | sudo tee /etc/ssh/sshd_config > /dev/null"
 		lxc exec $container_name -- bash -c "sudo echo \"ssh\" >> /etc/securetty"
 		lxc restart $container_name
+		sleep 3
 		echo -e "$GREEN Done ! First ssh to initialize connection"
 		getip
 		if [ -n "$host_name" ]; then
@@ -46,94 +63,63 @@ activate_ssh_password_less() {
 	fi
 }
 
-validate_container_name() {
-	while [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" || -z "$container_name" ]]; do
-		read -p "Container name already exist, please chose another: " container_name
-	done
-}
-
-start_if_stopped() {
-	if [[ "$(lxc list $container_name -c s --format csv)" =~ "STOPPED" ]]; then
-		lxc start $container_name
-		sleep 3
-	fi
-}
-
-create() {
-	init || {
-		echo -e "$RED lxc initialization error, abort"
-		exit 1
-	}
-	echo -e "$GREEN Creating new container from image"
-	validate_container_name
+_create_base() {
+	echo -e "$GREEN Creating base container from image"
 	uid=$(id -u $(whoami))
 	gid=$(id -g $(whoami))
-
-	if [[ "$(cat /etc/subuid)" =~ "root:$uid:1" ]]; then
-		:
-	else
+	if [[ ! "$(cat /etc/subuid)" =~ "root:$uid:1" ]]; then
 		echo -e "root:$uid:1" | sudo tee -a /etc/subuid >/dev/null
 	fi
-	if [[ "$(cat /etc/subgid)" =~ "root:$gid:1" ]]; then
-		:
-	else
+	if [[ ! "$(cat /etc/subgid)" =~ "root:$gid:1" ]]; then
 		echo -e "root:$gid:1" | sudo tee -a /etc/subgid >/dev/null
 	fi
-	lxc launch ubuntu:bionic --profile default --profile x11 $container_name
-	lxc stop $container_name
-	lxc config set $container_name raw.idmap "both $uid $gid"
-	lxc config device add $container_name homedir disk source=/home/$(whoami) path=/home/ubuntu/$(whoami)
-	lxc config set $container_name boot.autostart false
-	activate_ssh_password_less
-	spawn
+	lxc launch ubuntu:bionic --profile default --profile x11 base
+	lxc stop base
+	lxc config set base raw.idmap "both $uid $gid"
+	lxc config device add base homedir disk source=/home/$(whoami) path=/home/ubuntu/$(whoami)
+	lxc config set base boot.autostart false
 }
-
 spawn() {
 	if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
-		start_if_stopped
-		if [ "$NO_SHELL" = "true" ]; then
-			show_ip
-		else
-			lxc exec $container_name -- sudo --user ubuntu --login
-		fi
+		_start_if_stopped
+		lxc exec $container_name -- sudo --user ubuntu --login
 	else
 		if [[ "$(lxc list base -c n --format csv)" =~ "base" ]]; then
 			if [[ "$(lxc list base -c s --format csv)" =~ "RUNNING" ]]; then
 				lxc stop base
 			fi
+			_validate_new_container_name
 			lxc copy base $container_name
-			activate_ssh_password_less
-			spawn
+			_activate_ssh_passwordless
 		else
 			echo -e "$RED Base container not found"
-			create $container_name
+			_init || {
+				return $ERROR_INIT_FAILED
+			}
+			_create_base || {
+				return $ERROR_CREATE_BASE_FROM_IMAGE_FAILED
+			}
 		fi
+		spawn
 	fi
 }
 
-ask_if_empty() {
+showip() {
+	_start_if_stopped
+	host_name=$(lxc list $container_name -c 4 --format csv | cut -d' ' -f1)
+	echo -e "$GREEN IP of $container_name is $host_name"
+}
+
+_ask_if_empty() {
 	while [ -z "$container_name" ]; do
 		read -p "Container name: " container_name
 	done
-}
-
-show_ip() {
-	getip
-	if [ -z "$host_name" ]; then
-		echo -e "$RED IP of $container_name not found"
-	else
-		echo -e "$GREEN IP of $container_name is $host_name"
-	fi
 }
 
 main() {
 	case $1 in
 	spawn)
 		ACTION="_spawn"
-		shift
-		;;
-	create)
-		ACTION="_create"
 		shift
 		;;
 	showip)
@@ -152,57 +138,70 @@ main() {
 		;;
 	esac
 
-	while getopts ':cn:' opt; do
+	while getopts ':c:' opt; do
 		case "$opt" in
 		c)
 			echo -e "$GREEN -c: classic mode, without activating ssh passwordless"
-			NO_SSH_PASSWORDLESS="true"
-			shift
-			;;
-		n)
-			echo -e "$GREEN -n: no shell mode"
-			NO_SHELL="true"
+			no_ssh_passwordless="true"
 			shift
 			;;
 		\?)
 			echo -e "$RED Unknown option: -$OPTARG"
-			exit 3
+			exit 1
 			;;
 		esac
 	done
+
 	container_name=$1
-	ask_if_empty
+	_ask_if_empty
+	if [[ ! "$ACTION" =~ "_spawn" ]]; then
+		if [[ ! "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
+			echo -e "$RED container $container_name not found"
+			exit 1
+		fi
+	fi
 
 	case $ACTION in
 	_spawn)
-		spawn
-		;;
-	_create)
-		create
+		spawn || {
+			error_code=$?
+			if [ $error_code -eq $ERROR_INIT_FAILED ] || [ $error_code -eq $ERROR_CREATE_BASE_FROM_IMAGE_FAILED ]; then
+				return $error_code
+			else
+				return $ERROR_SPAWN_FAILED
+			fi
+		}
 		;;
 	_showip)
-		show_ip
+		showip
 		;;
 	_delete)
-		if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
-			start_if_stopped
-			getip
-			ssh-keygen -R $host_name
-			lxc stop $container_name
-			lxc delete $container_name
-		else
-			echo -e "$RED $container_name not found"
-		fi
-		;;
-	*)
-		exit 1
+		showip
+		ssh-keygen -R $host_name
+		lxc stop $container_name
+		lxc delete $container_name	
 		;;
 	esac
 }
 
 main "$@" || {
-	echo -e "$RED error while initializing new container, abort & revert"
-	echo -e "$RED delete manually lxc configurations (profiles,..etc) if needed"
-	lxc stop $container_name || { :; }
-	lxc delete $container_name
+	case $? in
+	$ERROR_INIT_FAILED)
+		echo -e "$RED Error while initializing lxc, please fix it manually"
+		;;
+	$ERROR_CREATE_BASE_FROM_IMAGE_FAILED)
+		echo -e "$RED Error while createing base container from image, revert"
+		echo -e "$RED Fix manually lxc configurations (profiles,..etc) if needed"
+		lxc stop base || { :; }
+		lxc delete base
+		;;
+	$ERROR_SPAWN_FAILED)
+		echo -e "$RED Error while createing new container from base, revert"
+		lxc stop $container_name || { :; }
+		lxc delete $container_name
+		;;
+	*)
+		echo -e "$RED some error happened"
+		;;
+	esac
 }
