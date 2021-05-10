@@ -1,6 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
+DEFAULT="\e[0m"
 GREEN="\e[32m"
 RED="\e[31m"
 ERROR_SPAWN_FAILED=901
@@ -16,10 +17,10 @@ _init() {
 		lxc profile create x11
 		read -p "nvidia.runtime = ? (DEFAULT=false): " nvidia_runtime
 		if [ "$nvidia_runtime" = "true" ]; then
-			echo -e "$GREEN Set nvidia.runtime = true"
+			echo -e "$GREEN Set nvidia.runtime = true $DEFAULT"
 		else
 			nvidia_runtime=false
-			echo -e "$RED Set nvidia.runtime = false"
+			echo -e "$RED Set nvidia.runtime = false $DEFAULT"
 		fi
 		cat $HOME/.deven/x11.profile | sed -e "s|connect: unix:@/tmp/.X11-unix/X0|connect: unix:@/tmp/.X11-unix/X${DISPLAY: -1}|" | sed -e "s|nvidia.runtime: \"false\"|nvidia.runtime: \"$nvidia_runtime\"|" | lxc profile edit x11
 	fi
@@ -44,7 +45,7 @@ _start_if_stopped() {
 
 _activate_ssh_passwordless() {
 	if [ "$no_ssh_passwordless" != "true" ]; then
-		echo -e "$GREEN Activate ssh passwordless"
+		echo -e "$GREEN Activate ssh passwordless $DEFAULT"
 		_start_if_stopped
 		lxc exec $container_name -- cloud-init status --wait
 		lxc exec $container_name -- passwd -d ubuntu
@@ -52,19 +53,17 @@ _activate_ssh_passwordless() {
 		lxc exec $container_name -- bash -c "sudo echo \"ssh\" >> /etc/securetty"
 		lxc restart $container_name
 		sleep 3
-		echo -e "$GREEN Done ! First ssh to initialize connection"
-		getip
-		if [ -n "$host_name" ]; then
-			until ssh ubuntu@$host_name command; do
-				sleep 3
-			done
-		fi
+		echo -e "$GREEN Done ! First ssh to initialize connection $DEFAULT"
+		showip
+		until ssh ubuntu@$host_name command; do
+			sleep 3
+		done
 		lxc stop $container_name
 	fi
 }
 
 _create_base() {
-	echo -e "$GREEN Creating base container from image"
+	echo -e "$GREEN Creating base container from image $DEFAULT"
 	uid=$(id -u $(whoami))
 	gid=$(id -g $(whoami))
 	if [[ ! "$(cat /etc/subuid)" =~ "root:$uid:1" ]]; then
@@ -92,7 +91,7 @@ spawn() {
 			lxc copy base $container_name
 			_activate_ssh_passwordless
 		else
-			echo -e "$RED Base container not found"
+			echo -e "$RED Base container not found $DEFAULT"
 			_init || {
 				return $ERROR_INIT_FAILED
 			}
@@ -107,7 +106,7 @@ spawn() {
 showip() {
 	_start_if_stopped
 	host_name=$(lxc list $container_name -c 4 --format csv | cut -d' ' -f1)
-	echo -e "$GREEN IP of $container_name is $host_name"
+	echo -e "$GREEN IP of $container_name is $host_name $DEFAULT"
 }
 
 _ask_if_empty() {
@@ -132,8 +131,8 @@ main() {
 		;;
 	*)
 		PROGRAM_NAME="$(basename "$0")"
-		echo -e "$RED $PROGRAM_NAME: '$1' is not a $PROGRAM_NAME command."
-		echo -e "$RED See '$PROGRAM_NAME help'"
+		echo -e "$RED $PROGRAM_NAME: '$1' is not a $PROGRAM_NAME command. $DEFAULT"
+		echo -e "$RED See '$PROGRAM_NAME help' $DEFAULT"
 		exit 1
 		;;
 	esac
@@ -141,12 +140,12 @@ main() {
 	while getopts ':c:' opt; do
 		case "$opt" in
 		c)
-			echo -e "$GREEN -c: classic mode, without activating ssh passwordless"
+			echo -e "$GREEN -c: classic mode, without activating ssh passwordless $DEFAULT"
 			no_ssh_passwordless="true"
 			shift
 			;;
 		\?)
-			echo -e "$RED Unknown option: -$OPTARG"
+			echo -e "$RED Unknown option: -$OPTARG $DEFAULT"
 			exit 1
 			;;
 		esac
@@ -156,7 +155,7 @@ main() {
 	_ask_if_empty
 	if [[ ! "$ACTION" =~ "_spawn" ]]; then
 		if [[ ! "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
-			echo -e "$RED container $container_name not found"
+			echo -e "$RED Container $container_name not found $DEFAULT"
 			exit 1
 		fi
 	fi
@@ -165,6 +164,7 @@ main() {
 	_spawn)
 		spawn || {
 			error_code=$?
+			echo -e "$RED Error while spawning, code $error_code $DEFAULT"
 			if [ $error_code -eq $ERROR_INIT_FAILED ] || [ $error_code -eq $ERROR_CREATE_BASE_FROM_IMAGE_FAILED ]; then
 				return $error_code
 			else
@@ -187,21 +187,21 @@ main() {
 main "$@" || {
 	case $? in
 	$ERROR_INIT_FAILED)
-		echo -e "$RED Error while initializing lxc, please fix it manually"
+		echo -e "$RED Error while initializing lxc, please fix it manually $DEFAULT"
 		;;
 	$ERROR_CREATE_BASE_FROM_IMAGE_FAILED)
-		echo -e "$RED Error while createing base container from image, revert"
-		echo -e "$RED Fix manually lxc configurations (profiles,..etc) if needed"
+		echo -e "$RED Error while createing base container from image, revert $DEFAULT"
+		echo -e "$RED Fix manually lxc configurations (profiles,..etc) if needed $DEFAULT"
 		lxc stop base || { :; }
 		lxc delete base
 		;;
 	$ERROR_SPAWN_FAILED)
-		echo -e "$RED Error while createing new container from base, revert"
+		echo -e "$RED Error while createing new container from base, revert $DEFAULT"
 		lxc stop $container_name || { :; }
 		lxc delete $container_name
 		;;
 	*)
-		echo -e "$RED some error happened"
+		echo -e "$RED Some error happened $DEFAULT"
 		;;
 	esac
 }
