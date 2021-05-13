@@ -190,13 +190,13 @@ main "$@" || {
 		echo -e "$RED Error while initializing lxc, please fix it manually $DEFAULT"
 		;;
 	$ERROR_CREATE_BASE_FROM_IMAGE_FAILED)
-		echo -e "$RED Error while createing base container from image, revert $DEFAULT"
+		echo -e "$RED Error while creating base container from image, revert $DEFAULT"
 		echo -e "$RED Fix manually lxc configurations (profiles,..etc) if needed $DEFAULT"
 		lxc stop base || { :; }
 		lxc delete base
 		;;
 	$ERROR_SPAWN_FAILED)
-		echo -e "$RED Error while createing new container from base, revert $DEFAULT"
+		echo -e "$RED Error while creating new container from base, revert $DEFAULT"
 		lxc stop $container_name || { :; }
 		lxc delete $container_name
 		;;
