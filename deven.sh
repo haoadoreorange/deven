@@ -6,21 +6,50 @@ namespace deven
 Log::AddOutput deven INFO
 
 _init() {
-    if [[ "$(lxc storage show default 2>&1)" =~ "Error" ]]; then
-        lxd init
-    fi
-
-    if [[ "$(lxc profile show x11 2>&1)" =~ "Error" ]]; then
-        lxc profile create x11
-        read -p "nvidia.runtime = ? (DEFAULT=false): " nvidia_runtime
-        if [ "$nvidia_runtime" = "true" ]; then
-            Log "$(UI.Color.Green) Set nvidia.runtime = true $(UI.Color.Default)"
-        else
-            nvidia_runtime=false
-            Log "$(UI.Color.RED) Set nvidia.runtime = false $(UI.Color.Default)"
+    try {
+        if [[ "$(lxc storage show default 2>&1)" =~ "Error" ]]; then
+            lxd init
         fi
-        cat $HOME/.deven/x11.profile | sed -e "s|connect: unix:@/tmp/.X11-unix/X0|connect: unix:@/tmp/.X11-unix/X${DISPLAY: -1}|" | sed -e "s|nvidia.runtime: \"false\"|nvidia.runtime: \"$nvidia_runtime\"|" | lxc profile edit x11
-    fi
+
+        if [[ "$(lxc profile show x11 2>&1)" =~ "Error" ]]; then
+            lxc profile create x11
+            read -p "nvidia.runtime = ? (DEFAULT=false): " nvidia_runtime
+            if [ "$nvidia_runtime" = "true" ]; then
+                Log "$(UI.Color.Green) Set nvidia.runtime = true $(UI.Color.Default)"
+            else
+                nvidia_runtime=false
+                Log "$(UI.Color.RED) Set nvidia.runtime = false $(UI.Color.Default)"
+            fi
+            cat $HOME/.deven/x11.profile | sed -e "s|connect: unix:@/tmp/.X11-unix/X0|connect: unix:@/tmp/.X11-unix/X${DISPLAY: -1}|" | sed -e "s|nvidia.runtime: \"false\"|nvidia.runtime: \"$nvidia_runtime\"|" | lxc profile edit x11
+        fi
+    } catch {
+        Log "$(UI.Color.Red) lxc init failed, please fix manually $(UI.Color.Default)"
+        Exception::PrintException "${__EXCEPTION__[@]}"
+        exit 1
+    }
+    
+    Log "$(UI.Color.Green) Creating base container from image $(UI.Color.Default)"
+    uid=$(id -u $(whoami))
+    gid=$(id -g $(whoami))
+    try {
+        if [[ ! "$(cat /etc/subuid)" =~ "root:$uid:1" ]]; then
+            echo "root:$uid:1" | sudo tee -a /etc/subuid >/dev/null
+        fi
+        if [[ ! "$(cat /etc/subgid)" =~ "root:$gid:1" ]]; then
+            echo "root:$gid:1" | sudo tee -a /etc/subgid >/dev/null
+        fi
+        lxc launch ubuntu:bionic --profile default --profile x11 base
+        lxc stop base
+        lxc config set base raw.idmap "both $uid $gid"
+        lxc config device add base homedir disk source=/home/$(whoami) path=/home/ubuntu/$(whoami)
+        lxc config set base boot.autostart false
+    } catch {
+        lxc stop base
+        lxc delete base
+        Log "$(UI.Color.Red) Creating base container failed $(UI.Color.Default)"
+        Exception::PrintException "${__EXCEPTION__[@]}"
+        exit 1 
+    }
 }
 
 _validateNewContainerName() {
@@ -61,29 +90,6 @@ _activateSshPasswordless() {
     fi
 }
 
-_createBase() {
-    Log "$(UI.Color.Green) Creating base container from image $(UI.Color.Default)"
-    uid=$(id -u $(whoami))
-    gid=$(id -g $(whoami))
-    try {
-        if [[ ! "$(cat /etc/subuid)" =~ "root:$uid:1" ]]; then
-            echo "root:$uid:1" | sudo tee -a /etc/subuid >/dev/null
-        fi
-        if [[ ! "$(cat /etc/subgid)" =~ "root:$gid:1" ]]; then
-            echo "root:$gid:1" | sudo tee -a /etc/subgid >/dev/null
-        fi
-        lxc launch ubuntu:bionic --profile default --profile x11 base
-        lxc stop base
-        lxc config set base raw.idmap "both $uid $gid"
-        lxc config device add base homedir disk source=/home/$(whoami) path=/home/ubuntu/$(whoami)
-        lxc config set base boot.autostart false
-    } catch {
-        lxc stop base
-        lxc delete base
-        e="Creating base container failed" throw
-    }
-}
-
 spawn() {
     if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
         _startIfStopped
@@ -98,22 +104,27 @@ spawn() {
                 lxc copy base $container_name
                 _activateSshPasswordless
             } catch {
-                lxc stop $container_name || { :; }
+                lxc stop $container_name
                 lxc delete $container_name
-                e="Creating $container_name container from base failed" throw
+                Log "$(UI.Color.Red) Creating $container_name container from base failed $(UI.Color.Default)"
+                Exception::PrintException "${__EXCEPTION__[@]}"
+                exit 1
             }
         else
             Log "$(UI.Color.Red) Base container not found $(UI.Color.Default)"
             _init
-            _createBase
         fi
         spawn
     fi
 }
 
 getIp() {
-    _startIfStopped
-    ip=$(lxc list $container_name -c 4 --format csv | cut -d' ' -f1)
+    if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
+        _startIfStopped
+        ip=$(lxc list $container_name -c 4 --format csv | cut -d' ' -f1)
+    else
+        e="$container_name doesn't exist to get ip" throw 
+    fi 
 }
 
 _askIfEmpty() {
