@@ -1,6 +1,6 @@
 #!/bin/bash
 set -o pipefail
-. "$HOME/.bash-oo-framework/lib/oo-bootstrap.sh"
+. "$BASH_OO/oo-bootstrap.sh"
 import util/log util/exception util/tryCatch util/namedParameters
 namespace deven
 Log::AddOutput deven INFO
