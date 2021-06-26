@@ -53,7 +53,7 @@ _init() {
 }
 
 _validateNewContainerName() {
-    while [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; do
+    while [[ "$(lxc list $container_name -c n --format csv)" =~ ^$container_name$ ]]; do
         read -p "Container name already exist, please chose another: " container_name
     done
     if [ -z "$container_name" ]; then
@@ -91,11 +91,11 @@ _activateSshPasswordless() {
 }
 
 spawn() {
-    if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
+    if [[ "$(lxc list $container_name -c n --format csv)" =~ ^$container_name$ ]]; then
         _startIfStopped
         lxc exec $container_name -- sudo --user ubuntu --login
     else
-        if [[ "$(lxc list base -c n --format csv)" =~ "base" ]]; then
+        if [[ "$(lxc list base -c n --format csv)" =~ ^base$ ]]; then
             try {
                 if [[ "$(lxc list base -c s --format csv)" =~ "RUNNING" ]]; then
                     lxc stop base
@@ -119,7 +119,7 @@ spawn() {
 }
 
 getIp() {
-    if [[ "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
+    if [[ "$(lxc list $container_name -c n --format csv)" =~ ^$container_name$ ]]; then
         _startIfStopped
         ip=$(lxc list $container_name -c 4 --format csv | cut -d' ' -f1)
     else
@@ -171,8 +171,8 @@ main() {
 
     container_name=$1
     _askIfEmpty
-    if [[ ! "$ACTION" =~ "_spawn" ]]; then
-        if [[ ! "$(lxc list $container_name -c n --format csv)" =~ "$container_name" ]]; then
+    if [[ ! "$ACTION" =~ ^_spawn$ ]]; then
+        if [[ ! "$(lxc list $container_name -c n --format csv)" =~ ^$container_name$ ]]; then
             Log "$(UI.Color.Red) Container $container_name not found $(UI.Color.Default)"
             exit 1
         fi
