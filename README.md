@@ -67,7 +67,7 @@ about the details, here some examples
 
 ### Installation
 
-`curl -L https://raw.githubusercontent.com/haoadoreorange/deven/main/install.sh | sh -s /where/to/install`
+`curl -L https://raw.githubusercontent.com/haoadoreorange/deven/main/install.sh | sh`
 
 This script has
 [bash-oo-framework](https://github.com/niieani/bash-oo-framework) as dependency.
