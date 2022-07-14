@@ -67,11 +67,12 @@ about the details, here some examples
 
 ### Installation
 
-Clone this repo and run the install script.
+`curl -L https://raw.githubusercontent.com/haoadoreorange/deven/main/install.sh | sh -s /where/to/install`
 
-This script has [bash-oo-framework](https://github.com/) as dependency. If it
-can't find that on your system through an environment variable, it will download
-by itself on first run.
+This script has
+[bash-oo-framework](https://github.com/niieani/bash-oo-framework) as dependency.
+If it can't find that on your system through the `BASH_OO` environment variable,
+it will download by itself on first run.
 
 Also, this assume that you already have a fully functional LXD on your system.
 
