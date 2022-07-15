@@ -257,6 +257,9 @@ _getIp() {
     _throwContainerNotExist "_getIp"
     _startContainerIfStopped
     ip="$(sudo lxc list "$container_name" -c 4 --format csv | cut -d' ' -f1)"
+    if [ -z "$ip" ]; then
+        e="$container_name container does not have ipv4, check your firewall settings" throw 
+    fi
 }
 
 _activateSshPasswordless() {
@@ -374,7 +377,7 @@ main() {
     _askContainerNameIfEmpty
     if [ "$ACTION" != "_spawn" ]; then
         if ! _containerExists; then
-            subject=error Log ""$container_name" container not found"
+            subject=error Log "$container_name container not found"
             exit 1
         fi
     fi
