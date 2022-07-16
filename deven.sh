@@ -258,7 +258,10 @@ _getIp() {
     _startContainerIfStopped
     ip="$(sudo lxc list "$container_name" -c 4 --format csv | cut -d' ' -f1)"
     if [ -z "$ip" ]; then
-        e="$container_name container does not have ipv4, check your firewall settings" throw 
+        subject=error Log "$container_name container does not have ipv4, your firewall might be blocking dhcp on the bridge interface. Please allow it and enter to continue"
+        read -r r 
+        sudo lxc restart "$container_name"
+        _getIp
     fi
 }
 
@@ -377,7 +380,7 @@ main() {
     _askContainerNameIfEmpty
     if [ "$ACTION" != "_spawn" ]; then
         if ! _containerExists; then
-            subject=error Log "$container_name container not found"
+            e="$container_name container not found" throw 
             exit 1
         fi
     fi
