@@ -1,7 +1,7 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-BIN_PATH="$HOME/.local/bin/deven"
+BIN_PATH="$HOME"/.local/bin/deven
 if [ ! -f "$BIN_PATH" ]; then
     echo "deven is not installed"
     exit 1
