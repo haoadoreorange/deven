@@ -14,8 +14,9 @@ else
     git pull
 fi
 
-printf "${GREEN}Softlinking deven binary to %s${NC}\n" "$HOME"/.local/bin
+local_bin="$HOME"/.local/bin
+printf "${GREEN}Softlinking deven binary to %s${NC}\n" "$local_bin"
 chmod +x "$INSTALL_DIR"/deven.sh
-mkdir -p "$HOME"/.local/bin
-ln -s "$INSTALL_DIR"/deven.sh "$HOME"/.local/bin/deven
+mkdir -p "$local_bin"
+ln -s "$INSTALL_DIR"/deven.sh "$local_bin"/deven
 printf "${GREEN}deven installed successfully, you might need to add ~/.local/bin/ to PATH to use it${NC}\n"
