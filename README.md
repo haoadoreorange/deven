@@ -72,7 +72,7 @@ about the details, here some examples
 This script has
 [bash-oo-framework](https://github.com/niieani/bash-oo-framework) as dependency.
 If it can't find the framework directory on your system through the `BASH_OO`
-environment variable, it will download by itself on first run.
+environment variable, it will download a bundled version on first run.
 
 Also, this assume that you already have a fully functional LXD on your system.
 

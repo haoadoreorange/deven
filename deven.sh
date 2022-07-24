@@ -1,37 +1,48 @@
 #!/bin/bash
+# -u will error with bash-oo
 set -o pipefail
 
-CURRENT_DIR="$(dirname "$(realpath "$BASH_SOURCE")")"
-if [ -f "$BASH_OO/oo-bootstrap.sh" ]; then
-    . "$BASH_OO/oo-bootstrap.sh"
-else 
-    echo "Bash OO Framework not found on system, downloading to $CURRENT_DIR"
-    git clone https://github.com/niieani/bash-oo-framework.git "$CURRENT_DIR"/bash-oo-framework
-    . "$CURRENT_DIR"/bash-oo-framework/lib/oo-bootstrap.sh
+local_bash_oo="$(dirname "$(realpath "$BASH_SOURCE")")/bash-oo-framework"
+oo_bootstrap="$BASH_OO"/oo-bootstrap.sh
+if [ ! -f "$oo_bootstrap" ]; then
+    oo_bootstrap="$local_bash_oo"/lib/oo-bootstrap.sh
+    echo "Bash OO framework not found on system"
+    if [ ! -f "$oo_bootstrap" ]; then
+        echo "Downloading bundled version to $local_bash_oo"
+        git clone https://github.com/niieani/bash-oo-framework.git "$local_bash_oo"
+    else 
+        echo "Found bundled version at $local_bash_oo"
+        cd "$local_bash_oo" &&
+        git pull
+    fi
 fi
+. "$oo_bootstrap"
 import util/log util/exception util/tryCatch
 namespace deven
 Log::AddOutput deven INFO
 Log::AddOutput error ERROR
+Log::AddOutput warn WARN
 
 #####################################################################################################################
 ############################################## Global Variables #####################################################
 #####################################################################################################################
 
-VERSION="0.1"
-        
-LUID=$(id -u $(whoami))
-LGID=$(id -g $(whoami))
+VERSION="0.2"
+LUID="$(id -u "$(whoami)")"
+LGID="$(id -g "$(whoami)")"
 BASE="base-$LUID"
 
 #####################################################################################################################
 ########################################## Init Functions & Helpers #################################################
 #####################################################################################################################
 
+#######################################
+# Return 0 if container exists
+#######################################
 # shellcheck disable=SC2120
 _containerExists() {
-    cn="${1:-"$container_name"}"
-    if [ "$(sudo lxc list "$cn" -c n --format csv)" == "$cn" ]; then
+    cn="${1:-$container_name}"
+    if [ "$(sudo lxc list "$cn" -c n --format csv)" = "$cn" ]; then
         return 0
     else
         return 1
@@ -42,22 +53,51 @@ _containerExists() {
 # Throw if container not exist
 # Arguments:
 #   Function name to use in error message
+#   Container name to check, default=$container_name
 #######################################
 _throwContainerNotExist() {
-    if ! _containerExists; then
-        e="Call $1 with non existent container" throw 
+    cn="${2:-$container_name}"
+    if ! _containerExists "$cn"; then
+        e="Call $1 with non existent container $cn" throw 
         exit 1
     fi
 }
 
+#######################################
+# Throw if container name is empty
+# Arguments:
+#   Function name to use in error message
+#   Container name to check, default=$container_name
+#######################################
+_throwEmptyContainerName() {
+    cn="${2:-$container_name}"
+    if [ -z "$cn" ]; then
+        e="Call $1 with empty container name" throw 
+        exit 1
+    fi
+}
+
+_getContainerState() {
+    cn="${1:-$container_name}"
+    _throwEmptyContainerName "_getContainerState" "$cn"
+    _throwContainerNotExist "_getContainerState" "$cn"
+    sudo lxc list "$cn" -c s --format csv
+}
+
+#######################################
+# Wait for cloud-init to finish in container
+# Arguments:
+#   Container name to wait, default=$container_name
+#######################################
 _waitForCloudInit() {
-    cn="${1:-"$container_name"}"
+    cn="${1:-$container_name}"
     _throwEmptyContainerName "_waitForCloudInit" "$cn"
-    if [ "$(sudo lxc list "$cn" -c s --format csv)" != "RUNNING" ]; then
+    _throwContainerNotExist "_waitForCloudInit" "$cn"
+    if [ "$(_getContainerState "$cn")" != "RUNNING" ]; then
         e="$cn container not running, cannot wait for cloud-init" throw 
         exit 1
     fi
-    Log "Wait for $cn container cloud-init"
+    Log "Waiting for $cn container cloud-init"
     Log "$(sudo lxc exec "$cn" -- cloud-init status --wait)"
 }
 
@@ -83,6 +123,7 @@ _init() {
     # Create if x11 profile doesn't exists for current user
     if ! sudo lxc profile show "$x11"  >/dev/null 2>&1; then
         Log "$(sudo lxc profile create "$x11")"
+        Log "Configuring lxc x11 profile for user id $LUID"
         { 
             cat << EOF
 config:
@@ -124,7 +165,6 @@ name: x11
 used_by: []
 EOF
         } | sudo lxc profile edit "$x11"
-        Log "Container x11 profile edited for user id $LUID succesfully"
     fi
     
     # We only execute this funcion if base container doesn't exist 
@@ -136,44 +176,55 @@ EOF
     
     try {
         # Allow to map user in container to real user in host for r/w mount
-        if [ ! -f "/etc/subuid" ]; then
-            subject=warn Log "/etc/subuid was missing, creating container might fail"
+        
+        subuid=/etc/subuid
+        if [ ! -f "$subuid" ]; then
+            subject=warn Log "$subuid is missing, creating container might fail"
         fi
-        if [[ ! "$(cat /etc/subuid)" =~ "root:$LUID:1" ]]; then
-            echo "root:$LUID:1" | sudo tee -a /etc/subuid >/dev/null
+        # subuid_content not contains the mapping
+        subuid_content="$(cat "$subuid" 2>/dev/null || :)"
+        if [ "$subuid_content" = "${subuid_content/root:$LUID:1/}" ]; then
+            echo "root:$LUID:1" | sudo tee -a "$subuid" >/dev/null
             restart_lxd=true
-        fi
-        if [ ! -f "/etc/subgid" ]; then
-            subject=warn Log "/etc/subgid was missing, creating container might fail"
-        fi
-        if [[ ! "$(cat /etc/subgid)" =~ "root:$LGID:1" ]]; then
-            echo "root:$LGID:1" | sudo tee -a /etc/subgid >/dev/null
-            restart_lxd=true
-        fi
-        if [ "$restart_lxd" == "true" ]; then
-            sudo systemctl restart lxd.service
-            Log "Restart lxd.service successfully"
         fi
         
+        subgid=/etc/subgid
+        if [ ! -f "$subgid" ]; then
+            subject=warn Log "$subgid is missing, creating container might fail"
+        fi
+        # subgid_content not contains the mapping
+        subgid_content="$(cat "$subgid" 2>/dev/null || :)"
+        if [ "$subgid_content" = "${subgid_content/root:$LGID:1/}" ]; then
+            echo "root:$LGID:1" | sudo tee -a "$subgid" >/dev/null
+            restart_lxd=true
+        fi
+        
+        if [ "${restart_lxd-}" = "true" ]; then
+            Log "Restarting lxd.service"
+            sudo systemctl restart lxd.service
+        fi
+        
+        Log "Creating base container from cloud image"
         Log "$(sudo lxc launch images:ubuntu/jammy/cloud --profile default --profile "$x11" "$BASE")"
         _waitForCloudInit "$BASE"
         sudo lxc stop "$BASE"
-        Log "Create base container from cloud image successfully"
         
         # Map user in container to real user in host for r/w mount
+        Log "Configuring base container"
         echo -e "uid $LUID 1000\ngid $LGID 1002" | sudo lxc config set "$BASE" raw.idmap -
         read -rp "Path of the shared dir that containers has access to (r/w) [default=~/dev-sync]: " shared_dir
-        shared_dir="${shared_dir:-"$HOME"/dev-sync}"
+        shared_dir="${shared_dir:-$HOME/dev-sync}"
         dir_name="$(basename "$shared_dir")"
         # Mount host directory with r/w 
         Log "$(sudo lxc config device add "$BASE" "$dir_name" disk source="$shared_dir" path=/home/ubuntu/"$dir_name")"
         sudo lxc config set "$BASE" boot.autostart false
-        Log "Config base container successfully"
+        # Needed for docker
+        sudo lxc config set dev security.nesting=true security.syscalls.intercept.setxattr=true security.syscalls.intercept.mknod=true
         
     } catch {
-        sudo lxc stop "$BASE" || :
+        subject=error Log "Create base container failed for user id $LUID. Clean up base container leftovers"
+        sudo lxc stop "$BASE" 2>/dev/null || :
         sudo lxc delete "$BASE"
-        subject=error Log "Create base container failed for user id $LUID. Deleted base container leftovers"
         Exception::PrintException "${__EXCEPTION__[@]}"
         exit 1 
     }
@@ -188,12 +239,12 @@ EOF
 #######################################
 _askContainerNameIfEmpty() {
     while [ -z "$container_name" ]; do
-        read -rp "Container name: " container_name
+        read -rp "Container name (cannot be empty): " container_name
     done
 }
 
 #######################################
-# Make sure container name doesn't already exist
+# Make sure container name doesn't already exist or empty
 #######################################
 _validateNewContainerName() {
     while _containerExists; do
@@ -206,31 +257,21 @@ _validateNewContainerName() {
 }
 
 #######################################
-# Throw if container name is empty
-# Arguments:
-#   Function name to use in error message
-#######################################
-_throwEmptyContainerName() {
-    cn="${2:-"$container_name"}"
-    if [ -z "$cn" ]; then
-        e="Call $1 with empty container name" throw 
-        exit 1
-    fi
-}
-
-#######################################
 # Start container if stopped and wait until cloud-init is done
 #######################################
 _startContainerIfStopped() {
     _throwEmptyContainerName "_startContainerIfStopped"
-    if [ "$(sudo lxc list "$container_name" -c s --format csv)" == "STOPPED" ]; then
+    _throwContainerNotExist "_startContainerIfStopped"
+    if [ "$(_getContainerState)" = "STOPPED" ]; then
+        Log "Starting $container_name container"
         sudo lxc start "$container_name"
         _waitForCloudInit
-        if [ "$(sudo lxc list "$container_name" -c s --format csv)" != "RUNNING" ]; then
+        if [ "$(_getContainerState)" != "RUNNING" ]; then
             e="Start $container_name container failed" throw 
             exit 1
         fi
-        Log "Start $container_name container successfully"
+    else
+        Log "$container_name container is not stopped, no need to start" 
     fi
 }
 
@@ -240,13 +281,17 @@ _startContainerIfStopped() {
 _restart() {
     _throwEmptyContainerName "_restart"
     _throwContainerNotExist "_restart"
+    if [ "$(_getContainerState)" != "RUNNING" ]; then
+        e="$cn container not running, cannot restart" throw 
+        exit 1
+    fi
+    Log "Restarting $container_name container"
     sudo lxc restart "$container_name"
     _waitForCloudInit
-    if [ "$(sudo lxc list "$container_name" -c s --format csv)" != "RUNNING" ]; then
+    if [ "$(_getContainerState)" != "RUNNING" ]; then
         e="Restart $container_name container failed" throw 
         exit 1
     fi
-    Log "Restart $container_name container successfully"
 }
 
 #######################################
@@ -256,29 +301,29 @@ _getIp() {
     _throwEmptyContainerName "_getIp"
     _throwContainerNotExist "_getIp"
     _startContainerIfStopped
-    ip="$(sudo lxc list "$container_name" -c 4 --format csv | cut -d' ' -f1)"
+    ip="$(sudo lxc list "$container_name" -c 4 --format csv | grep eth0 | cut -d' ' -f1)"
     if [ -z "$ip" ]; then
-        subject=error Log "$container_name container does not have ipv4, your firewall might be blocking dhcp on the bridge interface. Please allow it and enter to continue"
+        subject=error Log "$container_name container does not have ipv4, your firewall might be blocking dhcp on the bridge interface. Please review it and enter to retry"
         read -r r 
-        sudo lxc restart "$container_name"
+        _restart
         _getIp
     fi
 }
 
-_activateSshPasswordless() {
-    if [ "$no_ssh_passwordless" != "true" ]; then
-        _startContainerIfStopped
-        sudo lxc exec "$container_name" -- passwd -d ubuntu
-        sudo lxc exec "$container_name" -- bash -c "cat /etc/ssh/sshd_config | sed -e \"s|PasswordAuthentication no|PasswordAuthentication yes|\" | sed -e \"s|#PermitEmptyPasswords no|PermitEmptyPasswords yes|\" | sudo tee /etc/ssh/sshd_config > /dev/null"
-        # sudo lxc exec "$container_name" -- bash -c "sudo echo \"ssh\" >> /etc/securetty"
-        Log "Activate ssh passwordless for $container_name container successfully"
-        _restart
-        _getIp
-        until ssh ubuntu@$ip command; do
-            sleep 3
-        done
-        Log "First ssh to initialize connection successfully"
-    fi
+#######################################
+# Delete & clean up container
+#######################################
+delete() {
+    _throwEmptyContainerName "delete"
+    _throwContainerNotExist "delete"
+    Log "Removing $container_name container IP address from ssh known_hosts"
+    _getIp
+    ssh-keygen -R "$ip" 2>/dev/null
+    Log "Removing $container_name-container entry from ssh config"
+    sed -i "/# <$container_name-container>/,/# <\/$container_name-container>/d" "$HOME"/.ssh/config
+    Log "Deleting $container_name container"
+    sudo lxc stop "$container_name" 2>/dev/null || :
+    sudo lxc delete "$container_name"
 }
 
 #######################################
@@ -288,33 +333,57 @@ spawn() {
     # If container exists then login 
     if _containerExists; then
         _startContainerIfStopped
-        try { 
-            sudo lxc exec "$container_name" -- sudo --user ubuntu --login
-        } catch {
-            exit 0
-        }
+        sudo lxc exec "$container_name" -- sudo --user ubuntu --login || :
     else
         # Otherwise, if base container exists then create from copy 
         if _containerExists "$BASE"; then
             try {
-                if [ "$(sudo lxc list "$BASE" -c s --format csv)" == "RUNNING" ]; then
+                if [ "$(_getContainerState "$BASE")" = "RUNNING" ]; then
                     subject=warn Log "Base container is running, stopping it"
                     sudo lxc stop "$BASE"
                 fi
                 _validateNewContainerName
+                Log "Creating $container_name container from base"
                 sudo lxc copy "$BASE" "$container_name"
-                Log "Create $container_name container from base successfully"
-                _activateSshPasswordless
+                _getIp
+                
+                # Activating ssh passwordless
+                if [ "$no_ssh_passwordless" != "true" ]; then
+                    _startContainerIfStopped
+                    Log "Activating ssh passwordless for $container_name container"
+                    sudo lxc exec "$container_name" -- passwd -d ubuntu
+                    sudo lxc exec "$container_name" -- bash -c \
+                        "sudo sed -i -e \"s|PasswordAuthentication no|PasswordAuthentication yes|\"\
+                        -e \"s|#PermitEmptyPasswords no|PermitEmptyPasswords yes|\" /etc/ssh/sshd_config"
+                    # sudo lxc exec "$container_name" -- bash -c "sudo echo \"ssh\" >> /etc/securetty"
+                    _restart
+                    Log "Making 1st ssh to initialize connection"
+                    until ssh ubuntu@"$ip" command; do
+                        sleep 3
+                    done
+                fi
+                
+                # Add entry to ~/.ssh/config
+                ssh_entry_name="$container_name-container"
+                cat >> "$HOME"/.ssh/config <<EOF
+# <$ssh_entry_name>
+Host $ssh_entry_name 
+    HostName $ip
+    User ubuntu
+# </$ssh_entry_name> 
+EOF
+
             } catch {
-                sudo lxc stop "$container_name" || :
-                sudo lxc delete "$container_name"
-                Log "Create $container_name container from base failed. Delete container leftovers"
+                Log "Create $container_name container from base failed. Clean up container leftovers"
+                if _containerExists; then
+                    delete
+                fi 
                 Exception::PrintException "${__EXCEPTION__[@]}"
                 exit 1
             }
         # Otherwise init everything 
         else
-            Log "Base container not found for user id $LUID. Init"
+            Log "Base container not found for user id $LUID. Initing"
             _init
         fi
         # Recursive call until login successfully 
@@ -369,20 +438,17 @@ main() {
     while getopts 'c' opt; do
         case "$opt" in
         c)
+            Log "Creating container in classic mode"
             no_ssh_passwordless="true"
-            Log "Classic mode enabled"
             ;;
         esac
     done
     shift $((OPTIND - 1))
 
-    container_name=$1
+    container_name="${1-}"
     _askContainerNameIfEmpty
     if [ "$ACTION" != "_spawn" ]; then
-        if ! _containerExists; then
-            e="$container_name container not found" throw 
-            exit 1
-        fi
+        _throwContainerNotExist "$ACTION"
     fi
 
     case $ACTION in
@@ -391,15 +457,10 @@ main() {
         ;;
     _showip)
         _getIp
-        Log "IP of $container_name is $ip"
+        Log "IP of $container_name container is $ip"
         ;;
     _delete)
-        _getIp
-        ssh-keygen -R "$ip"
-        Log "Remove "$container_name" container IP address from ssh known_hosts successfully"
-        sudo lxc stop "$container_name"
-        sudo lxc delete "$container_name"
-        Log "Delete "$container_name" container successfully"
+        delete
         ;;
     esac
 }
