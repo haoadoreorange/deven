@@ -358,7 +358,7 @@ spawn() {
                     # sudo lxc exec "$container_name" -- bash -c "sudo echo \"ssh\" >> /etc/securetty"
                     _restart
                     Log "Making 1st ssh to initialize connection"
-                    until ssh ubuntu@"$ip" command; do
+                    until ssh -oStrictHostKeyChecking=accept-new ubuntu@"$ip" command; do
                         sleep 3
                     done
                 fi
