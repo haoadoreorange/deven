@@ -219,7 +219,7 @@ EOF
         Log "$(sudo lxc config device add "$BASE" "$dir_name" disk source="$shared_dir" path=/home/ubuntu/"$dir_name")"
         sudo lxc config set "$BASE" boot.autostart false
         # Needed for docker
-        sudo lxc config set dev security.nesting=true security.syscalls.intercept.setxattr=true security.syscalls.intercept.mknod=true
+        sudo lxc config set "$BASE" security.nesting=true security.syscalls.intercept.setxattr=true security.syscalls.intercept.mknod=true
         
     } catch {
         subject=error Log "Create base container failed for user id $LUID. Clean up base container leftovers"
