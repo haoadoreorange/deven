@@ -42,7 +42,7 @@ BASE="base-$LUID"
 # shellcheck disable=SC2120
 _containerExists() {
     cn="${1:-$container_name}"
-    if [ "$(sudo lxc list "$cn" -c n --format csv)" = "$cn" ]; then
+    if [ "$(sudo lxc list "$cn" -c n --format csv | sed -n '1p')" = "$cn" ]; then
         return 0
     else
         return 1
@@ -301,7 +301,11 @@ _getIp() {
     _throwEmptyContainerName "_getIp"
     _throwContainerNotExist "_getIp"
     _startContainerIfStopped
-    ip="$(sudo lxc list "$container_name" -c 4 --format csv | grep eth0 | cut -d' ' -f1)"
+    
+    # For some reason `lxc list` doesn't show ipv4, but the container does have one.
+    # ip="$(sudo lxc list "$container_name" -c 4 --format csv | grep eth0 | cut -d' ' -f1)"
+    ip="$(sudo lxc exec "$container_name" -- ip addr show eth0 | grep "inet\b" | awk '{print $2}' | cut -d/ -f1)"
+    
     if [ -z "$ip" ]; then
         subject=error Log "$container_name container does not have ipv4, your firewall might be blocking dhcp on the bridge interface. Please review it and enter to retry"
         read -r r 
