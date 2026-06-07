@@ -1,0 +1,51 @@
+# lxz, environment sandbox shortcuts with LXD
+
+Once upon a time in a galaxy far, far away...
+
+I needed a sandbox where I can install packages for a project without polluting my distro. LXD
+containers are basically thin VMs — full OS, persistent by default, disposable when you're done.
+
+### Why LXD, not Docker
+
+Docker is great for reproducible stuff, but I don't need reproducible. I want a draft where
+everything persists, but easy to toss away. Also, GUI apps in Docker feel clunky.
+
+### What it does
+
+On first run, creates a base container with:
+
+- X11 forwarding (GPU accelerated, NVIDIA only for now)
+- A chosen host directory mounted with read/write
+- Passwordless SSH access
+- Docker support (nesting enabled)
+
+Every new container is cloned from this base. Base image is Ubuntu Noble.
+
+### Usage
+
+`lxz help`
+
+Examples:
+
+- `lxz cd myproject` — into container, creates it if it doesn't exist
+- `lxz ip myproject` — get IP for VSCode SSH
+
+### Install
+
+```sh
+curl -L https://raw.githubusercontent.com/haoadoreorange/lxz/main/install.sh | sh `[install directory]`
+```
+
+May install
+
+- `lxd` on your system
+- <https://github.com/niieani/bash-oo-framework>
+
+### Limitations
+
+All `lxc` commands run with sudo — I don't add my user to the `lxd` group since it's
+[root-equivalent](https://wiki.archlinux.org/title/LXD#Configure_LXD).
+
+### Security
+
+Convenience over hardening. Read the script if that matters to you. PRs welcome.
